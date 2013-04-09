@@ -83,7 +83,7 @@ class Logger:
 			self._print_(msg)
 			
 	def _print_(self,msg):
-		print datetime.datetime.today()+' : '+msg
+		print str(datetime.datetime.today())+" : "+str(msg)
 
 
 class LogsProcessor:
@@ -98,8 +98,6 @@ class LogsProcessor:
 	def execute(self):
 		files = self._getFiles_()
 				
-		self.logger.debug(files)
-
 		for filePath in files:
 			fileObject = file(filePath, 'r')
 
