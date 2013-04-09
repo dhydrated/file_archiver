@@ -6,6 +6,7 @@ import os
 import glob
 import time
 import gzip
+import datetime
 
 class ArgumentParser:
 	"""Commandline arguments"""
@@ -76,10 +77,13 @@ class Logger:
 	def log(self, logLevel, msg):
 		if logLevel == "debug" :
 			if self.verbose :
-				print msg
+				self._print_(msg)
 
 		elif logLevel == "info" :
-			print msg
+			self._print_(msg)
+			
+	def _print_(self,msg):
+		print datetime.datetime.today()+' : '+msg
 
 
 class LogsProcessor:
