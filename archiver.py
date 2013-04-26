@@ -7,21 +7,41 @@ import glob
 import time
 import gzip
 import datetime
+import logging
+
+class Singleton(type):
+    def __init__(self, *args, **kwargs):
+        # Call the superclass (type), because we want Singleton isntances to
+        # be intialised *mostly* the same as type isntances
+        super(Singleton, self).__init__(*args, **kwargs)
+        self.__instance = None
+
+    def __call__(self, *args, **kwargs):
+        # If self (the *class* object) has an __instance, return it. Otherwise
+        # super-call __call__ to fall back to the normal class-call machinery
+        # of calling the class' __new__ then __init__
+        if self.__instance is None:
+            self.__instance = super(Singleton, self).__call__(*args, **kwargs)
+        return self.__instance
 
 class ArgumentParser:
 	"""Commandline arguments"""
 
+	__metaclass__ = Singleton
 	options = ""
 	args = ""
+
+	def __init__(self):
+		self.parse()
 
 	def parse(self):
 		self.parser = OptionParser()
 
 		self.parser.add_option("-d", "--directory", dest="directory", metavar="directory",
-                  help="directory where the logs are located")
+                  help="Directory where the logs are located. This field is required.")
 
 		self.parser.add_option("-p", "--pattern", dest="pattern", metavar="pattern",
-                  help="file pattern to process")
+                  help="File pattern to process. This field is required.")
 
 		self.parser.add_option("-i", "--interval", dest="interval", default=1, metavar="interval",
                   help="Period interval in day(s) based on the Last Modified Date of the file to be archived. Default is 1 day.")
@@ -38,27 +58,27 @@ class ArgumentParser:
 		(self.options, self.args) = self.parser.parse_args()
 
 	def isValid(self):
-		if (self.directory() is None) | (self.pattern() is None):
+		if (self.getDirectory() is None) | (self.getPattern() is None):
 			return False
 		else:
 			return True
 
-	def directory(self):
+	def getDirectory(self):
 		return self.options.directory
 
-	def pattern(self):
+	def getPattern(self):
 		return self.options.pattern
 
-	def verbose(self):
+	def isVerbose(self):
 		return self.options.verbose
 
-	def interval(self):
+	def getInterval(self):
 		return float(self.options.interval)
 
-	def threshold(self):
+	def getThreshold(self):
 		return float(self.options.threshold)
 
-	def remove(self):
+	def isRemovable(self):
 		return self.options.remove
 
 	def printUsage(self):
@@ -68,37 +88,36 @@ class ArgumentParser:
 		print(self.options)
 		print(self.args)
 
-class Logger:
-	"""Script logger"""
 
-	def __init__(self, arguments):
-		self.arguments = arguments
-		self.verbose = self.arguments.verbose()
+class LoggerFactory:
 
-	def debug(self, msg):
-		self._log_('debug', msg)
+	arguments = None
 
-	def info(self, msg):
-		self._log_('info', msg)
+	@staticmethod
+	def createLogger(name):
+		logging.basicConfig(format='%(asctime)s %(name)s:%(lineno)s %(message)s', level=LoggerFactory._createLevel_(LoggerFactory._isVerbose_()))
+		return logging.getLogger(name)
+		
+	@staticmethod
+	def _createLevel_(verbose):
+		level = logging.WARNING
+		if verbose:
+			level = logging.DEBUG
 
-	def _log_(self, logLevel, msg):
-		if logLevel == "debug" :
-			if self.verbose :
-				self._print_(msg)
+		return level
 
-		elif logLevel == "info" :
-			self._print_(msg)
-			
-	def _print_(self,msg):
-		print str(datetime.datetime.today())+" : "+str(msg)
-
+	@staticmethod
+	def _isVerbose_():
+		arguments = ArgumentParser()
+		return arguments.isVerbose()
 
 
 class BaseFileProcessor:
 	"""base processor"""
 
-	def __init__(self, arguments):
-		pass
+	arguments = None
+	pattern = None
+	logger = None
 
 	def _getFileLastModDate_(self, fileObject):
 		fileLastModDate =  os.path.getmtime(fileObject.name)
@@ -112,25 +131,38 @@ class BaseFileProcessor:
 		return diffInDay
 
 	def _deleteFile_(self, fileObject):
+		self._getLogger_().debug("deleting: " + fileObject.name)
 		fileObject.close()
 		os.remove(fileObject.name)
 
 	def _getFiles_(self):
-		return glob.glob(self.pattern)
+		return glob.glob(self._getPattern__())
 
 	def execute(self):
 		pass
 
+	def _getArguments_(self):
+		if self.arguments == None:
+			self.arguments = ArgumentParser()
+		return self.arguments
+
+	def _getPattern__(self):
+		return self.pattern
+
+	def _getLogger_(self):
+		if self.logger == None:
+			self.logger = LoggerFactory.createLogger(self.__class__.__name__)
+		return self.logger
 
 
 class ArchivedLogsProcessor(BaseFileProcessor):
 	"""archived logs processor"""
 
-	def __init__(self, arguments):
-		self.arguments = arguments
-		self.logger = Logger(arguments)
-		self.pattern = self.arguments.directory()+'/'+self.arguments.pattern()+'.gz'
-		self.threshold = self.arguments.threshold()
+	logger = None
+	threshold = None
+
+	def __init__(self):
+		self.pattern = self._getArguments_().getDirectory()+'/'+self._getArguments_().getPattern()+'.gz'
 
 	def execute(self):
 		files = self._getFiles_()
@@ -139,24 +171,35 @@ class ArchivedLogsProcessor(BaseFileProcessor):
 			fileObject = file(filePath, 'r')
 
 			if self._isRemovable_(fileObject) :
-				self.logger.debug("deleting: " + fileObject.name)
+				self._getLogger_().debug("deleting: " + fileObject.name)
 				self._deleteFile_(fileObject)
 
 	def _isRemovable_(self, fileObject):
 		fileLastModDate = self._getFileLastModDate_(fileObject)
 		diffInDay = self._calcTimeDiffInDay_(fileLastModDate)
-		return diffInDay > self.threshold
+		return diffInDay > self._getThreshold__()
+
+	def _getThreshold__(self):
+		if self.threshold is None:
+			self.threshold = self._getArguments_().getThreshold()
+		return self.threshold
+
+	def _getLogger_(self):
+		if self.logger == None:
+			self.logger = LoggerFactory.createLogger(self.__class__.__name__)
+		return self.logger
+
 
 class LogsProcessor(BaseFileProcessor):
 	"""logs processor"""
 
-	def __init__(self, arguments):
-		self.arguments = arguments
-		self.logger = Logger(arguments)
-		self.pattern = self.arguments.directory()+'/'+self.arguments.pattern()
-		self.interval = self.arguments.interval()
-		self.removable  = self.arguments.remove()
+	interval = None
+	removable = None
+	logger = None
 
+	def __init__(self):
+		self.pattern = self._getArguments_().getDirectory()+'/'+self._getArguments_().getPattern()
+		
 	def execute(self):
 		files = self._getFiles_()
 				
@@ -164,33 +207,44 @@ class LogsProcessor(BaseFileProcessor):
 			fileObject = file(filePath, 'r')
 
 			if self._isArchivable_(fileObject) :
-				self.logger.debug("archiving: " + fileObject.name)
 				self._archiveFile_(fileObject)
 				if self._isRemovable_():
-					self.logger.debug("deleting: " + fileObject.name)
 					self._deleteFile_(fileObject)
 
 	def _isRemovable_(self):
+		if self.removable is None:
+			self.removable = self._getArguments_().isRemovable()
 		return self.removable
+
+
+	def _getInterval_(self):
+		if self.interval is None:
+			self.interval = self._getArguments_().getInterval()
+		return self.interval
 
 	def _isArchivable_(self, fileObject):
 		fileLastModDate = self._getFileLastModDate_(fileObject)
 		diffInDay = self._calcTimeDiffInDay_(fileLastModDate)
-		return diffInDay > self.interval
+		return diffInDay > self._getInterval_()
 
 	def _archiveFile_(self, fileObject):
+		self._getLogger_().debug("archiving: " + fileObject.name + ' to ' + fileObject.name + '.gz')
 		f = gzip.open(fileObject.name+'.gz', 'wb', 9)
 		f.write(fileObject.read())
 		f.close()
 
+	def _getLogger_(self):
+		if self.logger == None:
+			self.logger = LoggerFactory.createLogger(self.__class__.__name__)
+		return self.logger
+
 def main():
 	arguments = ArgumentParser()
-	arguments.parse()
 
 	if arguments.isValid():
-		logsProcessor = LogsProcessor(arguments)
+		logsProcessor = LogsProcessor()
 		logsProcessor.execute()
-		archivedLogsProcessor = ArchivedLogsProcessor(arguments)
+		archivedLogsProcessor = ArchivedLogsProcessor()
 		archivedLogsProcessor.execute()
 		
 	else:
